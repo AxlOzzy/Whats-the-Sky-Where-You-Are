@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Colour Node</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --border: rgba(255,255,255,0.08);
+    --text: #f0ede8;
+    --muted: rgba(240,237,232,0.4);
+    --accent: #f0ede8;
+    --r: 128; --g: 128; --b: 128;
+    --live-color: rgb(var(--r), var(--g), var(--b));
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 300;
+    overflow: hidden;
+  }
+
+  /* ── Full-bleed colour wash behind everything ── */
+  #wash {
+    position: fixed;
+    inset: 0;
+    background: var(--live-color);
+    opacity: 0;
+    transition: opacity 1.2s ease, background 1.2s ease;
+    pointer-events: none;
+    z-index: 0;
+  }
+  body.live #wash { opacity: 0.12; }
+
+  /* ── Layout ── */
+  #app {
+    position: relative;
+    z-index: 1;
+    height: 100dvh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 28px 0 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .wordmark {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  #status-pill {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 5px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    transition: all 0.4s;
+  }
+  #status-pill.connected {
+    border-color: rgba(255,255,255,0.25);
+    color: var(--text);
+  }
+  #status-pill.sending {
+    background: var(--live-color);
+    border-color: var(--live-color);
+    color: #000;
+  }
+
+  /* ── Viewfinder ── */
+  #viewfinder-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+  }
+
+  #swatch-ring {
+    position: relative;
+    width: min(260px, 60vw);
+    height: min(260px, 60vw);
+  }
+  #swatch-ring svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+  }
+  #ring-track { stroke: var(--border); }
+  #ring-fill {
+    stroke: var(--live-color);
+    stroke-dasharray: 0 339;
+    transition: stroke-dasharray 0.6s ease, stroke 1s ease;
+  }
+  #swatch-inner {
+    position: absolute;
+    inset: 14px;
+    border-radius: 50%;
+    background: var(--live-color);
+    transition: background 1.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 4px;
+  }
+  #hex-label {
+    font-family: 'DM Mono', monospace;
+    font-size: clamp(13px, 3.5vw, 16px);
+    font-weight: 500;
+    color: rgba(255,255,255,0.9);
+    mix-blend-mode: difference;
+    text-shadow: 0 0 12px rgba(0,0,0,0.4);
+    letter-spacing: 0.06em;
+  }
+  #rgb-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: rgba(255,255,255,0.6);
+    mix-blend-mode: difference;
+    letter-spacing: 0.06em;
+  }
+
+  /* hidden canvas for pixel work */
+  #canvas { display: none; }
+
+  /* ── RGB bars ── */
+  #bars {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    opacity: 0;
+    transition: opacity 0.6s;
+  }
+  body.live #bars { opacity: 1; }
+  .bar-row {
+    display: grid;
+    grid-template-columns: 16px 1fr 32px;
+    align-items: center;
+    gap: 10px;
+  }
+  .bar-letter {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+  }
+  .bar-track {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    width: 50%;
+    transition: width 0.8s ease;
+  }
+  #bar-r .bar-fill { background: #ff6b6b; }
+  #bar-g .bar-fill { background: #69db7c; }
+  #bar-b .bar-fill { background: #74c0fc; }
+  .bar-val {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    text-align: right;
+  }
+
+  /* ── Bottom panel ── */
+  footer {
+    padding: 20px 0 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* Config rows */
+  #config {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .field label {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .field input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    padding: 9px 12px;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .field input:focus { border-color: rgba(255,255,255,0.25); }
+  .field.full { grid-column: span 2; }
+
+  /* Big go button */
+  #go-btn {
+    width: 100%;
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.3s;
+    position: relative;
+    overflow: hidden;
+  }
+  #go-btn::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--live-color);
+    opacity: 0;
+    transition: opacity 0.4s;
+  }
+  body.live #go-btn::after { opacity: 0.15; }
+  #go-btn:hover { border-color: rgba(255,255,255,0.2); }
+  #go-btn.running { border-color: rgba(255,255,255,0.2); }
+
+  #log-line {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    text-align: center;
+    min-height: 14px;
+    letter-spacing: 0.06em;
+  }
+</style>
+</head>
+<body>
+
+<div id="wash"></div>
+
+<div id="app">
+  <header>
+    <span class="wordmark">Colour Node</span>
+    <span id="status-pill">Offline</span>
+  </header>
+
+  <div id="viewfinder-wrap">
+    <div id="swatch-ring">
+      <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+        <circle id="ring-track" cx="60" cy="60" r="54"
+          fill="none" stroke-width="2"/>
+        <circle id="ring-fill" cx="60" cy="60" r="54"
+          fill="none" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <div id="swatch-inner">
+        <span id="hex-label">——</span>
+        <span id="rgb-label">— — —</span>
+      </div>
+    </div>
+
+    <div id="bars">
+      <div class="bar-row" id="bar-r">
+        <span class="bar-letter">R</span>
+        <div class="bar-track"><div class="bar-fill"></div></div>
+        <span class="bar-val">—</span>
+      </div>
+      <div class="bar-row" id="bar-g">
+        <span class="bar-letter">G</span>
+        <div class="bar-track"><div class="bar-fill"></div></div>
+        <span class="bar-val">—</span>
+      </div>
+      <div class="bar-row" id="bar-b">
+        <span class="bar-letter">B</span>
+        <div class="bar-track"><div class="bar-fill"></div></div>
+        <span class="bar-val">—</span>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <div id="config">
+      <div class="field">
+        <label>Location ID</label>
+        <input id="cfg-location" type="text" value="node-01" autocomplete="off" spellcheck="false"/>
+      </div>
+      <div class="field">
+        <label>Interval (sec)</label>
+        <input id="cfg-interval" type="number" value="5" min="1" max="60"/>
+      </div>
+      <div class="field full">
+        <label>MQTT Broker (WebSocket URL)</label>
+        <input id="cfg-broker" type="text"
+          value="wss://broker.hivemq.com:8884/mqtt"
+          autocomplete="off" spellcheck="false"/>
+      </div>
+    </div>
+
+    <button id="go-btn">Start capturing</button>
+    <div id="log-line">Configure above, then tap Start</div>
+  </footer>
+</div>
+
+<canvas id="canvas"></canvas>
+<video id="video" autoplay muted playsinline style="display:none"></video>
+
+<script>
+const video   = document.getElementById('video');
+const canvas  = document.getElementById('canvas');
+const ctx     = canvas.getContext('2d', { willReadFrequently: true });
+const goBtn   = document.getElementById('go-btn');
+const logLine = document.getElementById('log-line');
+const pill    = document.getElementById('status-pill');
+
+const hexLabel = document.getElementById('hex-label');
+const rgbLabel = document.getElementById('rgb-label');
+const swatchInner = document.getElementById('swatch-inner');
+const ringFill  = document.getElementById('ring-fill');
+const wash      = document.getElementById('wash');
+
+let running = false;
+let mqttClient = null;
+let captureTimer = null;
+let sendCount = 0;
+
+function toHex(v) { return v.toString(16).padStart(2, '0').toUpperCase(); }
+
+function setColor(r, g, b) {
+  const hex = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  document.documentElement.style.setProperty('--r', r);
+  document.documentElement.style.setProperty('--g', g);
+  document.documentElement.style.setProperty('--b', b);
+  document.documentElement.style.setProperty('--live-color', `rgb(${r},${g},${b})`);
+
+  hexLabel.textContent = hex;
+  rgbLabel.textContent = `${r}  ${g}  ${b}`;
+
+  // RGB bars
+  ['r','g','b'].forEach((ch, i) => {
+    const val = [r,g,b][i];
+    const row = document.getElementById(`bar-${ch}`);
+    row.querySelector('.bar-fill').style.width = `${Math.round(val/255*100)}%`;
+    row.querySelector('.bar-val').textContent = val;
+  });
+
+  // Spinner ring — fills proportionally to send count (up to 12, one full rotation)
+  const circumference = 2 * Math.PI * 54;
+  const progress = Math.min(sendCount / 12, 1);
+  ringFill.style.strokeDasharray = `${circumference * progress} ${circumference}`;
+}
+
+function captureAndSend() {
+  const w = video.videoWidth || 320;
+  const h = video.videoHeight || 240;
+  canvas.width = w;
+  canvas.height = h;
+  ctx.drawImage(video, 0, 0, w, h);
+
+  const data = ctx.getImageData(0, 0, w, h).data;
+  let r = 0, g = 0, b = 0;
+  const pixels = w * h;
+  for (let i = 0; i < data.length; i += 4) {
+    r += data[i]; g += data[i+1]; b += data[i+2];
+  }
+  r = Math.round(r / pixels);
+  g = Math.round(g / pixels);
+  b = Math.round(b / pixels);
+
+  setColor(r, g, b);
+  sendCount++;
+
+  const locationId = document.getElementById('cfg-location').value.trim() || 'node-01';
+  const payload = JSON.stringify({
+    location_id: locationId,
+    r, g, b,
+    hex: `#${toHex(r)}${toHex(g)}${toHex(b)}`,
+    timestamp: new Date().toISOString()
+  });
+
+  const topic = `installation/colour/${locationId}`;
+
+  if (mqttClient && mqttClient.connected) {
+    mqttClient.publish(topic, payload, { qos: 1 }, (err) => {
+      if (!err) {
+        pill.textContent = 'Sending';
+        pill.className = 'sending';
+        logLine.textContent = `#${sendCount} → ${topic}`;
+        setTimeout(() => {
+          if (running) { pill.textContent = 'Live'; pill.className = 'connected'; }
+        }, 600);
+      } else {
+        logLine.textContent = `Publish error: ${err.message}`;
+      }
+    });
+  } else {
+    logLine.textContent = 'Not connected to broker — retrying…';
+  }
+}
+
+async function start() {
+  const brokerUrl  = document.getElementById('cfg-broker').value.trim();
+  const locationId = document.getElementById('cfg-location').value.trim() || 'node-01';
+  const interval   = Math.max(1, parseInt(document.getElementById('cfg-interval').value) || 5) * 1000;
+
+  logLine.textContent = 'Requesting camera…';
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }
+    });
+    video.srcObject = stream;
+    await new Promise(r => video.onloadedmetadata = r);
+  } catch (e) {
+    logLine.textContent = 'Camera denied — please allow access and retry.';
+    return;
+  }
+
+  logLine.textContent = 'Connecting to broker…';
+  pill.textContent = 'Connecting';
+
+  mqttClient = mqtt.connect(brokerUrl, {
+    clientId: `colour-node-${locationId}-${Math.random().toString(16).slice(2,8)}`,
+    reconnectPeriod: 3000,
+    connectTimeout: 8000,
+  });
+
+  mqttClient.on('connect', () => {
+    pill.textContent = 'Live';
+    pill.className = 'connected';
+    logLine.textContent = 'Connected — capturing…';
+    document.body.classList.add('live');
+    captureAndSend();
+    captureTimer = setInterval(captureAndSend, interval);
+  });
+
+  mqttClient.on('error', (err) => {
+    logLine.textContent = `Broker error: ${err.message}`;
+    pill.textContent = 'Error';
+    pill.className = '';
+  });
+
+  mqttClient.on('offline', () => {
+    pill.textContent = 'Offline';
+    pill.className = '';
+    logLine.textContent = 'Broker offline — reconnecting…';
+  });
+
+  running = true;
+  goBtn.textContent = 'Stop capturing';
+  goBtn.classList.add('running');
+}
+
+function stop() {
+  clearInterval(captureTimer);
+  if (mqttClient) { mqttClient.end(); mqttClient = null; }
+  if (video.srcObject) {
+    video.srcObject.getTracks().forEach(t => t.stop());
+    video.srcObject = null;
+  }
+  running = false;
+  sendCount = 0;
+  document.body.classList.remove('live');
+  pill.textContent = 'Offline';
+  pill.className = '';
+  goBtn.textContent = 'Start capturing';
+  goBtn.classList.remove('running');
+  logLine.textContent = 'Stopped.';
+  ringFill.style.strokeDasharray = '0 339';
+}
+
+goBtn.addEventListener('click', () => { running ? stop() : start(); });
+</script>
+</body>
+</html>
