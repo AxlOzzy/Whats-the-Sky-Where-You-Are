@@ -58,8 +58,13 @@
   header {
     padding: 28px 0 20px;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
+  }
+  .wordmark-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
   }
   .wordmark {
     font-family: 'DM Mono', monospace;
@@ -68,6 +73,85 @@
     letter-spacing: 0.18em;
     text-transform: uppercase;
     color: var(--muted);
+  }
+  #info-btn {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    text-align: left;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+  }
+  #info-btn:hover { opacity: 1; }
+
+  #info-panel {
+    position: fixed;
+    top: 68px;
+    left: 24px;
+    width: min(300px, calc(100vw - 48px));
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    padding: 18px;
+    z-index: 10;
+    transform: translateY(-6px);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.22s ease, opacity 0.22s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  #info-panel.open {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .info-title {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .info-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .info-step {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .info-step-num {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    padding-top: 1px;
+    min-width: 14px;
+  }
+  .info-step-text {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 300;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .info-note {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+    line-height: 1.6;
   }
   #status-pill {
     font-family: 'DM Mono', monospace;
@@ -272,9 +356,39 @@
 
 <div id="app">
   <header>
-    <span class="wordmark">Colour Node</span>
+    <div class="wordmark-wrap">
+      <span class="wordmark">Colour Node</span>
+      <button id="info-btn">? How it works</button>
+    </div>
     <span id="status-pill">Offline</span>
   </header>
+
+  <div id="info-panel">
+    <span class="info-title">Quick Start Guide</span>
+    <div class="info-steps">
+      <div class="info-step">
+        <span class="info-step-num">01</span>
+        <span class="info-step-text">Enter your location — city, state, country — in the Location ID field.</span>
+      </div>
+      <div class="info-step">
+        <span class="info-step-num">02</span>
+        <span class="info-step-text">Point your camera at an unobstructed view of the sky.</span>
+      </div>
+      <div class="info-step">
+        <span class="info-step-num">03</span>
+        <span class="info-step-text">Allow camera access when prompted. Images are never stored or sent — only the hex colour code, your location name, and a timestamp leave your device.</span>
+      </div>
+      <div class="info-step">
+        <span class="info-step-num">04</span>
+        <span class="info-step-text">Tap Start. Your sky colour will be sampled and sent to the hub live at the selected sample rate — 10 seconds is recommended.</span>
+      </div>
+      <div class="info-step">
+        <span class="info-step-num">05</span>
+        <span class="info-step-text">Keep this page open and do not let your device sleep. If the page is not active, sampling will stop. We recommend keeping your device plugged in with screen brightness turned down — and checking your settings for any auto-lock or auto-sleep.</span>
+      </div>
+    </div>
+    <span class="info-note">Thanks for being part of this art project! ♡</span>
+  </div>
 
   <div id="viewfinder-wrap">
     <div id="swatch-ring">
@@ -308,7 +422,7 @@
     <div id="config">
       <div class="field">
         <label>Location ID</label>
-        <input id="cfg-location" type="text" value="node-01" autocomplete="off" spellcheck="false"/>
+        <input id="cfg-location" type="text" value="" placeholder="city, country" autocomplete="off" spellcheck="false"/>
       </div>
       <div class="field">
         <label>Interval (sec)</label>
@@ -446,7 +560,7 @@ function captureAndSend() {
   setColor(r, g, b);
   sendCount++;
 
-  const locationId = document.getElementById('cfg-location').value.trim() || 'node-01';
+  const locationId = document.getElementById('cfg-location').value.trim() || 'unknown';
   const payload = JSON.stringify({
     location_id: locationId,
     r, g, b,
@@ -477,7 +591,7 @@ function captureAndSend() {
 
 async function start() {
   const brokerUrl  = document.getElementById('cfg-broker').value.trim();
-  const locationId = document.getElementById('cfg-location').value.trim() || 'node-01';
+  const locationId = document.getElementById('cfg-location').value.trim() || 'unknown';
   const interval   = Math.max(1, parseInt(document.getElementById('cfg-interval').value) || 10) * 1000;
 
   logLine.textContent = 'Requesting camera…';
@@ -548,6 +662,18 @@ function stop() {
 }
 
 goBtn.addEventListener('click', () => { running ? stop() : start(); });
+
+const infoBtn   = document.getElementById('info-btn');
+const infoPanel = document.getElementById('info-panel');
+infoBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  infoPanel.classList.toggle('open');
+  infoBtn.textContent = infoPanel.classList.contains('open') ? '↑ Close' : '? How it works';
+});
+document.addEventListener('click', () => {
+  infoPanel.classList.remove('open');
+  infoBtn.textContent = '? How it works';
+});
 
 window.addEventListener('resize', () => { setupRingCanvas(); drawRing(); });
 
