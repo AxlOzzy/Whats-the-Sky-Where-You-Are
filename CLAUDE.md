@@ -9,45 +9,82 @@ central installation hub.
 ## How it works
 
 1. **Edge nodes** — people at remote locations open a webpage on any device (phone, laptop, etc),
-   point their camera at their surroundings, and hit Start. The page captures frames from the
-   camera, averages all pixels down to a single RGB value, and sends it as a small JSON packet
+   point their camera at the sky, and hit Start. The page captures frames from the camera,
+   averages all pixels down to a single RGB value, and sends it as a small JSON packet
    to an MQTT broker.
 
 2. **MQTT broker** — acts as a message routing layer between edge nodes and the hub. Each
    location publishes to its own topic: `installation/colour/{location_id}`.
 
-3. **Hub** (not yet built) — subscribes to all location topics on the MQTT broker and displays
-   the incoming colours at the physical installation.
+3. **Hub** — a local Node.js server that subscribes to all location topics, stores data in
+   SQLite, and serves a live display page. Runs on the operator's machine only — not in git,
+   not publicly accessible.
 
 ---
 
 ## Repo contents
 
 ### `index.html`
-The edge capture page. Designed to be hosted on GitHub Pages and opened on any phone or laptop —
-no install required. Key behaviours:
+The edge capture page. Hosted on GitHub Pages, opened on any phone or laptop — no install
+required. Key behaviours:
 - Requests camera access via `getUserMedia` (rear camera preferred on mobile)
 - Captures a frame every N seconds (configurable, default 10s)
 - Averages all pixel RGB values using a `<canvas>` element
 - Sends a JSON packet to the MQTT broker via MQTT.js over WebSocket
-- Config fields on the page: Location ID, Interval, Broker URL
+- Config fields: Location ID (city/country format), Interval, Broker URL
+- Collapsible Quick Start Guide panel accessible from the header
+- Colour history ring around the centre swatch — clockwise arc segments, one per capture,
+  up to 36 samples, oldest evicted when full
 
 **Packet format sent by each node:**
 ```json
 {
-  "location_id": "iceland-01",
+  "location_id": "london, uk",
   "r": 142,
   "g": 178,
   "b": 201,
   "hex": "#8EB2C9",
-  "timestamp": "2026-05-17T14:23:01+00:00"
+  "timestamp": "2026-05-17T14:23:01.000Z",
+  "timezone": "Europe/London"
 }
 ```
 
 ### `capture_edge.py`
-An alternative Python edge node script for devices that can run Python (Raspberry Pi, laptops).
-Does the same job as `index.html` but runs in a terminal. Uses OpenCV for camera capture.
-Supports both MQTT and WebSocket transports. Config is at the top of the file.
+Alternative Python edge node for devices that can run Python (Raspberry Pi, laptops).
+Same job as `index.html` but runs in a terminal. Uses OpenCV for camera capture.
+Supports both MQTT and WebSocket transports. Config at top of file.
+
+---
+
+## Hub (local only — gitignored)
+
+Lives in `hub/`. Not committed to the repo. Run with `npm start` from the `hub/` directory.
+
+### `hub/server.js`
+Node.js server that:
+- Subscribes to `installation/colour/#` on the MQTT broker
+- Writes every packet to SQLite (`colours.db`) — `latest` table (one row per node) and
+  `history` table (full log)
+- Serves `hub.html` at `http://localhost:3000`
+- Serves `display.html` at `http://localhost:3000/display?node=LOCATION_ID`
+- Pushes live updates to connected browsers via Server-Sent Events (SSE)
+- API endpoints: `GET /api/colours`, `GET /api/history`
+
+### `hub/hub.html`
+Operator dashboard. Shows one card per active node:
+- Square colour swatch (live-updating)
+- Historical colour strip along the right edge — last 10 colours, oldest top, newest bottom
+- Location ID, hex value, timestamp in the edge device's local timezone
+- Hide button (×) on hover — persists across refreshes via localStorage
+- "N hidden" toggle in header to reveal and restore hidden nodes
+- Display button (⤢) — opens the full-screen display page for that node in a new tab
+
+### `hub/display.html`
+Full-screen colour display for a single node. Designed to be sent to a dedicated screen.
+- URL: `http://localhost:3000/display?node=LOCATION_ID`
+- Pure colour fill, live-updating via SSE
+- Bottom bar: location ID (left), hex code (centre), local time at edge (right)
+- Time ticks live using the edge device's timezone
 
 ---
 
@@ -59,33 +96,30 @@ MQTT brokers — the hub sees normal MQTT messages.
 
 **Default broker for testing:** `wss://broker.hivemq.com:8884/mqtt` (HiveMQ free public broker)
 
-For production, swap this for a private broker (e.g. self-hosted Mosquitto, HiveMQ Cloud,
-or CloudMQTT). The broker URL field is editable on the page so nodes can be pointed at a
-new broker without a code change.
+For production, swap for a private broker (e.g. self-hosted Mosquitto, HiveMQ Cloud,
+or CloudMQTT). The broker URL field is editable on the page.
 
 ---
 
 ## Deployment
 
-`index.html` is hosted on **GitHub Pages**. Any change pushed to `main` goes live automatically.
-The live URL follows the pattern: `https://{username}.github.io/{repo-name}`
+`index.html` is hosted on **GitHub Pages**. Any push to `main` goes live automatically.
+Live URL: `https://AxlOzzy.github.io/Whats-the-Sky-Where-You-Are`
 
----
-
-## What still needs building
-
-- **Hub display** — a page or application that subscribes to `installation/colour/#` on the
-  MQTT broker and displays live colour panels for each active location. This is the next thing
-  to build. It should show one colour swatch per location, update in real time as packets arrive,
-  and ideally show the location ID and last-updated timestamp alongside each colour.
+The hub is **local only** — run `npm start` inside `hub/` on the operator's machine.
+The `hub/` directory is gitignored.
 
 ---
 
 ## Key decisions made so far
 
-- Processing happens at the **edge** (not the hub) to keep bandwidth minimal — only 3 numbers
-  are sent per capture, not images.
-- The webpage approach was chosen over Python/native apps so that any participant anywhere
-  can join by just opening a link — no install, no technical knowledge required.
-- MQTT was chosen over plain WebSocket for robustness — it handles reconnection, message
-  queuing, and scales easily to many simultaneous nodes.
+- Processing happens at the **edge** — only 3 numbers + metadata sent per capture, not images.
+- Webpage approach chosen so any participant can join by opening a link — no install required.
+- MQTT chosen over plain WebSocket for robustness — handles reconnection, queuing, scales to
+  many simultaneous nodes.
+- Hub is local-only (not hosted) because data only needs capturing during active sessions,
+  and keeping it local avoids auth complexity and hosting costs.
+- Hub display pages (`/display?node=X`) are designed to be opened on separate screens at the
+  physical installation — one URL per node, full-screen colour.
+- Timezone auto-detected on the edge device (`Intl.DateTimeFormat`) and included in every
+  packet so the hub can show local time at each remote location.
