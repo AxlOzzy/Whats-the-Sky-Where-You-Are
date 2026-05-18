@@ -85,6 +85,8 @@ Full-screen colour display for a single node. Designed to be sent to a dedicated
 - Pure colour fill, live-updating via SSE
 - Bottom bar: location ID (left), hex code (centre), local time at edge (right)
 - Time ticks live using the edge device's timezone
+- Historical colour strip on right edge — last 10 colours, seeded from DB on load
+- Amber pulsing reconnection indicator appears if hub connection drops, auto-clears on reconnect
 
 ---
 
@@ -111,6 +113,38 @@ The `hub/` directory is gitignored.
 
 ---
 
+## Physical installation setup
+
+The hub machine runs `npm start` and connects to a **GL.iNet travel router** (recommended)
+which creates a dedicated local WiFi network for the installation space.
+
+Each display screen connects to the same WiFi and opens a browser pointed at:
+```
+http://192.168.8.100:3000/display?node=LOCATION_ID
+```
+(where `192.168.8.100` is the hub machine's static local IP on the GL.iNet network)
+
+**Screen options (mix and match):**
+- **Dumb screen + Fire Stick** — Silk browser, navigate to URL, fullscreen. Disable sleep:
+  Settings → Display & Sounds → Sleep → Never
+- **Smart TV** — built-in browser (Samsung Tizen, LG WebOS). Disable auto-sleep in TV settings.
+- **Android tablet/phone** — Chrome. Use Android Screen Pinning to lock the tab.
+- **iPad/iPhone** — Safari. Use Guided Access (triple-click) to lock to the display page.
+- **Old laptop** — Chromium fullscreen (F11). Keep plugged in.
+- **Raspberry Pi + any HDMI screen** — Chromium kiosk mode, auto-boots to URL on startup.
+
+**Hub machine static IP (Mac):**
+System Preferences → Network → Advanced → TCP/IP → Configure IPv4: Manually
+- IP: `192.168.8.100`, Subnet: `255.255.255.0`, Router: `192.168.8.1`
+
+**Key risks to test before show day:**
+- Devices falling asleep mid-show (disable all auto-lock/auto-sleep)
+- Devices losing WiFi (travel router keeps the network stable and isolated)
+- Mixed screen resolutions — display page is pure colour fill so it adapts fine; text
+  labels are fixed-position and may need checking on unusual aspect ratios
+
+---
+
 ## Key decisions made so far
 
 - Processing happens at the **edge** — only 3 numbers + metadata sent per capture, not images.
@@ -123,3 +157,7 @@ The `hub/` directory is gitignored.
   physical installation — one URL per node, full-screen colour.
 - Timezone auto-detected on the edge device (`Intl.DateTimeFormat`) and included in every
   packet so the hub can show local time at each remote location.
+- Display screens can be any browser-capable device (Fire Stick, smart TV, tablet, laptop,
+  Raspberry Pi) — chosen for flexibility with recycled/mixed hardware at the venue.
+- A dedicated travel router (GL.iNet) is used at the installation so the hub network is
+  isolated and reliable, independent of venue WiFi.
