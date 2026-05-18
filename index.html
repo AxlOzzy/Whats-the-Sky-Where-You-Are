@@ -104,22 +104,15 @@
     width: min(260px, 60vw);
     height: min(260px, 60vw);
   }
-  #swatch-ring svg {
+  #ring-canvas {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    transform: rotate(-90deg);
-  }
-  #ring-track { stroke: var(--border); }
-  #ring-fill {
-    stroke: var(--live-color);
-    stroke-dasharray: 0 339;
-    transition: stroke-dasharray 0.6s ease, stroke 1s ease;
   }
   #swatch-inner {
     position: absolute;
-    inset: 14px;
+    inset: 14%;
     border-radius: 50%;
     background: var(--live-color);
     transition: background 1.2s ease;
@@ -285,12 +278,7 @@
 
   <div id="viewfinder-wrap">
     <div id="swatch-ring">
-      <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
-        <circle id="ring-track" cx="60" cy="60" r="54"
-          fill="none" stroke-width="2"/>
-        <circle id="ring-fill" cx="60" cy="60" r="54"
-          fill="none" stroke-width="2" stroke-linecap="round"/>
-      </svg>
+      <canvas id="ring-canvas"></canvas>
       <div id="swatch-inner">
         <span id="hex-label">——</span>
         <span id="rgb-label">— — —</span>
@@ -324,7 +312,7 @@
       </div>
       <div class="field">
         <label>Interval (sec)</label>
-        <input id="cfg-interval" type="number" value="5" min="1" max="60"/>
+        <input id="cfg-interval" type="number" value="10" min="1" max="60"/>
       </div>
       <div class="field full">
         <label>MQTT Broker (WebSocket URL)</label>
@@ -350,16 +338,67 @@ const goBtn   = document.getElementById('go-btn');
 const logLine = document.getElementById('log-line');
 const pill    = document.getElementById('status-pill');
 
-const hexLabel = document.getElementById('hex-label');
-const rgbLabel = document.getElementById('rgb-label');
+const hexLabel    = document.getElementById('hex-label');
+const rgbLabel    = document.getElementById('rgb-label');
 const swatchInner = document.getElementById('swatch-inner');
-const ringFill  = document.getElementById('ring-fill');
-const wash      = document.getElementById('wash');
+const ringCanvas  = document.getElementById('ring-canvas');
+const ringCtx     = ringCanvas.getContext('2d');
+const wash        = document.getElementById('wash');
 
 let running = false;
 let mqttClient = null;
 let captureTimer = null;
 let sendCount = 0;
+
+// Ring history — stores up to MAX_HISTORY colour strings, fills clockwise
+const colorHistory = [];
+const MAX_HISTORY = 36;
+const RING_RADIUS_RATIO = 0.40;
+const RING_WIDTH_RATIO  = 0.08;
+
+function setupRingCanvas() {
+  const dpr  = window.devicePixelRatio || 1;
+  const size = ringCanvas.parentElement.offsetWidth;
+  ringCanvas.width  = size * dpr;
+  ringCanvas.height = size * dpr;
+  ringCtx.scale(dpr, dpr);
+}
+
+function drawRing() {
+  const dpr  = window.devicePixelRatio || 1;
+  const size = ringCanvas.width / dpr;
+  const cx   = size / 2;
+  const cy   = size / 2;
+  const r    = size * RING_RADIUS_RATIO;
+  const lw   = size * RING_WIDTH_RATIO;
+
+  ringCtx.clearRect(0, 0, size, size);
+
+  // Background track
+  ringCtx.beginPath();
+  ringCtx.arc(cx, cy, r, 0, 2 * Math.PI);
+  ringCtx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ringCtx.lineWidth = lw;
+  ringCtx.lineCap = 'butt';
+  ringCtx.stroke();
+
+  if (colorHistory.length === 0) return;
+
+  const segAngle = (2 * Math.PI) / MAX_HISTORY;
+  const gap      = 0.03; // radians gap between segments
+  const offset   = -Math.PI / 2; // start from 12 o'clock
+
+  colorHistory.forEach((color, i) => {
+    const start = offset + i * segAngle + gap / 2;
+    const end   = offset + (i + 1) * segAngle - gap / 2;
+    ringCtx.beginPath();
+    ringCtx.arc(cx, cy, r, start, end);
+    ringCtx.strokeStyle = color;
+    ringCtx.lineWidth = lw;
+    ringCtx.lineCap = 'butt';
+    ringCtx.stroke();
+  });
+}
 
 function toHex(v) { return v.toString(16).padStart(2, '0').toUpperCase(); }
 
@@ -381,10 +420,10 @@ function setColor(r, g, b) {
     row.querySelector('.bar-val').textContent = val;
   });
 
-  // Spinner ring — fills proportionally to send count (up to 12, one full rotation)
-  const circumference = 2 * Math.PI * 54;
-  const progress = Math.min(sendCount / 12, 1);
-  ringFill.style.strokeDasharray = `${circumference * progress} ${circumference}`;
+  // Push to ring history, evict oldest when full
+  colorHistory.push(`rgb(${r},${g},${b})`);
+  if (colorHistory.length > MAX_HISTORY) colorHistory.shift();
+  drawRing();
 }
 
 function captureAndSend() {
@@ -438,7 +477,7 @@ function captureAndSend() {
 async function start() {
   const brokerUrl  = document.getElementById('cfg-broker').value.trim();
   const locationId = document.getElementById('cfg-location').value.trim() || 'node-01';
-  const interval   = Math.max(1, parseInt(document.getElementById('cfg-interval').value) || 5) * 1000;
+  const interval   = Math.max(1, parseInt(document.getElementById('cfg-interval').value) || 10) * 1000;
 
   logLine.textContent = 'Requesting camera…';
 
@@ -497,16 +536,21 @@ function stop() {
   }
   running = false;
   sendCount = 0;
+  colorHistory.length = 0;
   document.body.classList.remove('live');
   pill.textContent = 'Offline';
   pill.className = '';
   goBtn.textContent = 'Start capturing';
   goBtn.classList.remove('running');
   logLine.textContent = 'Stopped.';
-  ringFill.style.strokeDasharray = '0 339';
+  drawRing();
 }
 
 goBtn.addEventListener('click', () => { running ? stop() : start(); });
+
+window.addEventListener('resize', () => { setupRingCanvas(); drawRing(); });
+
+requestAnimationFrame(() => { setupRingCanvas(); drawRing(); });
 </script>
 </body>
 </html>
