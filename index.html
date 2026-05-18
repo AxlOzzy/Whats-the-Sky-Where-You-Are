@@ -451,7 +451,8 @@ function captureAndSend() {
     location_id: locationId,
     r, g, b,
     hex: `#${toHex(r)}${toHex(g)}${toHex(b)}`,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
   });
 
   const topic = `installation/colour/${locationId}`;
